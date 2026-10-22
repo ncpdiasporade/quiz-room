@@ -11,6 +11,7 @@ create table if not exists public.quiz_games (
  started_at timestamptz,
  created_at timestamptz not null default now()
 );
+alter table public.quiz_games add column if not exists title text not null default 'QuizRoom Live';
 create table if not exists public.quiz_hosts (
  game_id uuid primary key references public.quiz_games(id) on delete cascade,
  token text not null
@@ -53,10 +54,11 @@ alter table public.quiz_questions enable row level security;
 alter table public.quiz_players enable row level security;
 alter table public.quiz_answers enable row level security;
 
-create or replace function public.quiz_create(p_questions jsonb)
+create or replace function public.quiz_create(p_questions jsonb,p_title text)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare g uuid; p text; tok text; item jsonb; n int:=0;
 begin
+ if length(trim(coalesce(p_title,''))) not between 1 and 120 then raise exception 'Quiz title must be 1–120 characters'; end if;
  if jsonb_typeof(p_questions) <> 'array' or jsonb_array_length(p_questions) < 1 or jsonb_array_length(p_questions) > 30 then raise exception 'Provide 1–30 questions'; end if;
  for item in select value from jsonb_array_elements(p_questions) loop
   if length(trim(coalesce(item->>'prompt',''))) < 4 or jsonb_typeof(item->'options') <> 'array' or jsonb_array_length(item->'options') <> 4 or (item->>'correctIndex')::int not between 0 and 3 or (item->>'seconds')::int not between 5 and 120 then raise exception 'Invalid question'; end if;
@@ -65,7 +67,7 @@ begin
  loop
   p := lpad((floor(random()*1000000))::int::text, 6, '0');
   begin
-   insert into public.quiz_games(pin) values(p) returning id into g;
+   insert into public.quiz_games(pin,title) values(p,trim(p_title)) returning id into g;
    exit;
   exception when unique_violation then null;
   end;
@@ -79,6 +81,12 @@ begin
  end loop;
  return jsonb_build_object('gameId',g,'pin',p,'hostToken',tok);
 end $$;
+
+-- Keep older clients working while the new frontend deploys.
+create or replace function public.quiz_create(p_questions jsonb)
+returns jsonb language sql set search_path = '' as $$
+ select public.quiz_create(p_questions,'QuizRoom Live');
+$$;
 
 create or replace function public.quiz_join(p_pin text,p_nickname text)
 returns jsonb language plpgsql security definer set search_path = '' as $$
@@ -113,7 +121,7 @@ begin
  select * into q from public.quiz_questions where game_id=g.id and position=g.question_index;
  select coalesce(jsonb_agg(jsonb_build_object('choice',choice,'count',cnt)),'[]'::jsonb) into ans from (select choice,count(*) cnt from public.quiz_answers where question_id=q.id group by choice) a;
  if p_player_id is not null then select jsonb_build_object('choice',a.choice,'points',a.points) into mine from public.quiz_answers a join public.quiz_players pl on pl.id=a.player_id where a.question_id=q.id and a.player_id=p_player_id and pl.token=p_player_token; end if;
- return jsonb_build_object('pin',g.pin,'phase',g.phase,'questionIndex',g.question_index,'questionCount',qcount,'startedAt',g.started_at,'players',players,'leaderboard',case when g.phase in ('results','finished') or is_host then leaderboard else '[]'::jsonb end,'isHost',is_host,'myAnswer',mine,
+ return jsonb_build_object('title',g.title,'pin',g.pin,'phase',g.phase,'questionIndex',g.question_index,'questionCount',qcount,'startedAt',g.started_at,'players',players,'leaderboard',case when g.phase in ('results','finished') or is_host then leaderboard else '[]'::jsonb end,'isHost',is_host,'myAnswer',mine,
  'question',case when q.id is null then null else jsonb_build_object('prompt',q.prompt,'options',q.options,'seconds',q.seconds,'correctIndex',case when g.phase in ('results','finished') then to_jsonb(q.correct_index) else 'null'::jsonb end,'answerCounts',case when g.phase='results' then ans else '[]'::jsonb end) end);
 end $$;
 
@@ -157,8 +165,8 @@ begin
  return jsonb_build_object('ok',true);
 end $$;
 
-revoke all on function public.quiz_create(jsonb),public.quiz_join(text,text),public.quiz_state(text,uuid,text,text),public.quiz_submit(text,uuid,text,int),public.quiz_next(text,text) from public;
-grant execute on function public.quiz_create(jsonb),public.quiz_join(text,text),public.quiz_state(text,uuid,text,text),public.quiz_submit(text,uuid,text,int),public.quiz_next(text,text) to anon,authenticated;
+revoke all on function public.quiz_create(jsonb),public.quiz_create(jsonb,text),public.quiz_join(text,text),public.quiz_state(text,uuid,text,text),public.quiz_submit(text,uuid,text,int),public.quiz_next(text,text) from public;
+grant execute on function public.quiz_create(jsonb),public.quiz_create(jsonb,text),public.quiz_join(text,text),public.quiz_state(text,uuid,text,text),public.quiz_submit(text,uuid,text,int),public.quiz_next(text,text) to anon,authenticated;
 -- Supabase Realtime needs a SELECT policy on quiz_games. This table contains
 -- ONLY public game metadata: never secrets or answers.
 grant select on public.quiz_games to anon,authenticated;

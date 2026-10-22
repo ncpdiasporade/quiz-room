@@ -38,6 +38,20 @@ test('50 players can join and player 51 is refused by the database', async () =>
   assert.equal((await state(game)).players.length, 50);
 });
 
+test('quiz titles persist for hosts and players, including older clients', async () => {
+  const game = await value('select public.quiz_create($1::jsonb,$2) as result',
+    [JSON.stringify(questions), '  BKSZM Anniversary Quiz 2026  ']);
+  const player = await join(game, 'Title tester');
+  assert.equal((await state(game)).title, 'BKSZM Anniversary Quiz 2026');
+  assert.equal((await state(game, player)).title, 'BKSZM Anniversary Quiz 2026');
+  const legacy = await createGame();
+  assert.equal((await state(legacy)).title, 'QuizRoom Live');
+  for (const title of [null, '', ' ', 'x'.repeat(121)]) {
+    await assert.rejects(value('select public.quiz_create($1::jsonb,$2) as result',
+      [JSON.stringify(questions), title]), /Quiz title must/);
+  }
+});
+
 test('sessions, timer, server scoring, repeated answers and final leaderboard', async () => {
   const game = await createGame();
   await assert.rejects(next(game), /At least one player/);
