@@ -1,6 +1,8 @@
--- Run once in Supabase SQL Editor. The public anon key is safe in the frontend;
+-- Run in Supabase SQL Editor. Safe to re-run; existing games are retained.
+-- The public anon key is safe in the frontend;
 -- sensitive tables cannot be read or modified directly by visitors.
 -- Uses PostgreSQL built-in gen_random_uuid(); no extension required.
+begin;
 create table if not exists public.quiz_games (
  id uuid primary key default gen_random_uuid(),
  pin text unique not null,
@@ -82,11 +84,12 @@ create or replace function public.quiz_join(p_pin text,p_nickname text)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare g public.quiz_games%rowtype; pl uuid; tok text;
 begin
- select * into g from public.quiz_games where pin=p_pin;
+ -- Serialize joining with other joins, game starts, and answer submissions.
+ -- Re-read the phase under the lock so a late join cannot clear a live timer.
+ select * into g from public.quiz_games where pin=p_pin for update;
  if not found then raise exception 'Game not found'; end if;
  if g.phase<>'lobby' then raise exception 'This game has already started'; end if;
  if length(trim(coalesce(p_nickname,''))) not between 2 and 24 then raise exception 'Nickname must be 2–24 characters'; end if;
- perform pg_advisory_xact_lock(hashtext(g.id::text));
  if (select count(*) from public.quiz_players where game_id=g.id)>=50 then raise exception 'Game is full (50 players maximum)'; end if;
  tok:=gen_random_uuid()::text || gen_random_uuid()::text;
  insert into public.quiz_players(game_id,nickname,token) values(g.id,trim(p_nickname),tok) returning id into pl;
@@ -124,7 +127,7 @@ begin
  select * into q from public.quiz_questions where game_id=g.id and position=g.question_index;
  secs:=extract(epoch from clock_timestamp()-g.started_at);
  if secs>q.seconds or secs<0 then raise exception 'Answer time is over'; end if;
- if p_choice not between 0 and 3 then raise exception 'Invalid option'; end if;
+ if p_choice is null or p_choice not between 0 and 3 then raise exception 'Invalid option'; end if;
  pts:=case when p_choice=q.correct_index then greatest(500,round(1000*(1-secs/(q.seconds*2)))::int) else 0 end;
  insert into public.quiz_answers(game_id,player_id,question_id,choice,points) values(g.id,p_player_id,q.id,p_choice,pts);
  update public.quiz_players set score=score+pts where id=p_player_id;
@@ -159,5 +162,7 @@ grant execute on function public.quiz_create(jsonb),public.quiz_join(text,text),
 -- Supabase Realtime needs a SELECT policy on quiz_games. This table contains
 -- ONLY public game metadata: never secrets or answers.
 grant select on public.quiz_games to anon,authenticated;
+drop policy if exists "Public game events" on public.quiz_games;
 create policy "Public game events" on public.quiz_games for select to anon,authenticated using(true);
 do $$ begin alter publication supabase_realtime add table public.quiz_games; exception when duplicate_object then null; end $$;
+commit;

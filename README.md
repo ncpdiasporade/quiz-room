@@ -4,8 +4,8 @@ A mobile-friendly, host-controlled multiplayer trivia application. Host creates 
 
 ## Deployment (GitHub Pages + Supabase)
 
-1. Create a free project at https://supabase.com and open **SQL Editor**.
-2. Paste the complete content of `setup.sql` and run it **once**. It creates the tables, RPC endpoints, access controls, and Realtime publication. Do not re-run it while games are active.
+1. Create an organization on the **Free ($0/month)** plan at https://supabase.com, create a project, and open **SQL Editor**. Keep the organization on Free; no paid upgrades or add-ons are needed for this app.
+2. Paste the complete content of `setup.sql` and run it. It creates the tables, RPC endpoints, access controls, and Realtime publication in a transaction. It can be re-run without deleting existing games; schedule schema updates between games.
 3. In Supabase **Project Settings → API**, copy the **Project URL** and **anon/publishable key** into `config.js`. **Never** use the service-role/secret key in browser code.
 4. Create a **public** GitHub repository (for example `quiz-room`). Upload `index.html`, `styles.css`, `app.js`, `config.js`, `setup.sql` and this README to the repository root.
 5. Go to repository **Settings → Pages**. Under **Build and deployment**, select **Deploy from a branch**, branch **main**, folder **/(root)**, and save.
@@ -14,6 +14,7 @@ A mobile-friendly, host-controlled multiplayer trivia application. Host creates 
 
 ### Important deployment facts
 - GitHub Pages hosts the frontend only. Supabase powers multiplayer; Pages by itself cannot synchronize players.
+- Free hosting is subject to provider quotas. Supabase Free projects can pause after a week of inactivity; restore the project in its dashboard before an event. See https://supabase.com/pricing for current quotas. Free hosting does not guarantee uninterrupted service or performance for 50 live devices.
 - `git.io` is retired for new short links; the correct GitHub site is `github.io`.
 - GitHub Pages uses HTTPS. Configure Supabase network and allowed origins as needed.
 - Designed for **50 maximum participants per game**, enforced atomically by a database lock. The host is separate.
@@ -21,7 +22,19 @@ A mobile-friendly, host-controlled multiplayer trivia application. Host creates 
 - Scores and correctness are calculated and validated on the database, never trusted from browser-supplied scores.
 - The host secret is stored in localStorage on the hosting browser. Clearing browser data or switching devices loses host control of that game. There is intentionally no permanent account system yet.
 - A newly created game persists in Supabase; there is no automatic deletion policy. Set a retention policy before public, long-term usage.
-- This is an MVP, **not a load-tested production system**. Public users can create games and consume Supabase resources. Add authentication, abuse controls, rate limiting, monitoring and an admin cleanup process before publicly advertising the site.
+- This is an MVP, **not a network-load-tested production system**. Local PostgreSQL tests cover 50 players joining, the 51st player being rejected, scoring, timers, authorization and setup reruns. They do not simulate 50 independent database connections or 50 live devices. Public users can create games and consume Supabase resources. Add authentication, abuse controls, rate limiting, monitoring and an admin cleanup process before publicly advertising the site.
+
+### Local database tests
+
+The website needs no build step or Node.js server. Node.js is used only for development checks:
+
+```sh
+npm ci
+npm test
+npm run check
+```
+
+Tests run the actual SQL functions in an isolated PGlite PostgreSQL database. Supabase Realtime delivery and the hosted API still need live testing after configuration.
 
 ### Test checklist
 1. Open the site and create a two-question quiz in one browser.

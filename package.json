@@ -1,0 +1,13 @@
+{
+  "name": "quiz-room",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Static QuizRoom frontend with a Supabase multiplayer backend",
+  "scripts": {
+    "test": "node --test tests/backend.test.mjs",
+    "check": "node --check app.js && node --check config.js"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.11"
+  }
+}
